@@ -12,8 +12,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Path, Circle, Line } from "react-native-svg";
 import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type Screen = "start" | "game" | "gameover";
+
+const BEST_KEY = "tempo_tap_best_score";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -75,7 +78,7 @@ export default function TempoTap() {
   const [screen, setScreen] = useState<Screen>("start");
 
   const [score, setScore] = useState(0);
-  const [best, setBest] = useState(4); // you can set 0; screenshot shows 4
+  const [best, setBest] = useState(0);
 
   // gameplay: moving dot angle + direction
   const angleRef = useRef(ARC_START_DEG);
@@ -148,6 +151,24 @@ export default function TempoTap() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(BEST_KEY);
+        const n = raw ? Number(raw) : 0;
+        if (mounted) setBest(Number.isFinite(n) ? n : 0);
+      } catch {
+        if (mounted) setBest(0);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const playHit = async () => {
     try {
       await hitSoundRef.current?.replayAsync();
@@ -163,7 +184,19 @@ export default function TempoTap() {
   // best update on gameover
   useEffect(() => {
     if (screen !== "gameover") return;
-    setBest((prev) => Math.max(prev, score));
+
+    (async () => {
+      try {
+        const nextBest = Math.max(best, score);
+        if (nextBest !== best) {
+          setBest(nextBest);
+          await AsyncStorage.setItem(BEST_KEY, String(nextBest));
+        }
+      } catch {
+        // ignore write failures
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen, score]);
 
   // game loop

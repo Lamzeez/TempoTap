@@ -6,6 +6,8 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
+  Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -100,6 +102,7 @@ export default function TempoTap() {
   const [screen, setScreen] = useState<Screen>("start");
   const [score,  setScore]  = useState(0);
   const [best,   setBest]   = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
 
   const [streak,     setStreak]     = useState(0);
   const [bestStreak, setBestStreak] = useState(0);
@@ -276,6 +279,7 @@ export default function TempoTap() {
   useEffect(() => {
     if (screen !== "game") return;
     const id = setInterval(() => {
+      if (isPaused) return;
       const next = angleRef.current + dirRef.current * speedRef.current;
       if (next <= ARC_START_DEG)      { angleRef.current = ARC_START_DEG; dirRef.current = 1;  }
       else if (next >= ARC_END_DEG)   { angleRef.current = ARC_END_DEG;   dirRef.current = -1; }
@@ -284,7 +288,7 @@ export default function TempoTap() {
       forceTick((x) => (x + 1) % 100000);
     }, TICK_MS);
     return () => clearInterval(id);
-  }, [screen]);
+  }, [screen, isPaused]);
 
   // ── Animations ────────────────────────────────────────────────────────────
   const pulseTap = () => {
@@ -347,7 +351,28 @@ export default function TempoTap() {
     return a >= safeCenterRef.current - half && a <= safeCenterRef.current + half;
   };
 
+  const pauseGame = async () => {
+    setIsPaused(true);
+    try {
+      if (gameMusicRef.current) {
+        const status = await gameMusicRef.current.getStatusAsync();
+        if (status.isLoaded) await gameMusicRef.current.setVolumeAsync(0.55 * 0.3);
+      }
+    } catch {}
+  };
+
+  const resumeGame = async () => {
+    setIsPaused(false);
+    try {
+      if (gameMusicRef.current) {
+        const status = await gameMusicRef.current.getStatusAsync();
+        if (status.isLoaded) await gameMusicRef.current.setVolumeAsync(0.55);
+      }
+    } catch {}
+  };
+
   const startGame = () => {
+    setIsPaused(false);
     setScore(0);
     setStreak(0);
     lastFlashedStreakRef.current = -1;
@@ -360,7 +385,7 @@ export default function TempoTap() {
   };
 
   const onTap = async () => {
-    if (screen !== "game" || tapLockedRef.current) return;
+    if (screen !== "game" || tapLockedRef.current || isPaused) return;
     tapLockedRef.current = true;
     pulseTap();
     glow();
@@ -430,8 +455,11 @@ export default function TempoTap() {
       >
         <View style={styles.startContainer}>
           <View style={styles.titleBlock}>
-            <Text style={styles.bigTitle}>TEMPO{"\n"}TAP</Text>
-            <View style={styles.divider} />
+            <Image
+              source={require("../assets/tempotap_logo.png")}
+              style={styles.logoImageHero}
+              resizeMode="contain"
+            />
             <Text style={styles.tagline}>1 Life. 1 Button.</Text>
             <Text style={styles.subText}>Tap when the line hits the zone!</Text>
           </View>
@@ -567,6 +595,70 @@ export default function TempoTap() {
     >
       <View style={styles.gameContainer}>
 
+        {/* ── Pause Modal Overlay ── */}
+        <Modal
+          visible={isPaused}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+        >
+          <View style={styles.pauseOverlay}>
+            <View style={styles.pauseCard}>
+              {/* Logo */}
+              <Image
+                source={require("../assets/tempotap_logo.png")}
+                style={styles.pauseLogo}
+                resizeMode="contain"
+              />
+              <Text style={styles.pauseTitle}>PAUSED</Text>
+              <View style={styles.pauseDivider} />
+
+              {/* Resume */}
+              <Pressable
+                onPress={resumeGame}
+                style={({ pressed }) => [styles.pillBtn, styles.pausePillBtn, pressed && styles.pressed]}
+              >
+                <Text style={styles.pillBtnText}>▶  RESUME</Text>
+              </Pressable>
+
+              {/* Restart */}
+              <Pressable
+                onPress={async () => {
+                  setIsPaused(false);
+                  // Fully stop and restart game music from the top
+                  try {
+                    if (gameMusicRef.current) {
+                      const status = await gameMusicRef.current.getStatusAsync();
+                      if (status.isLoaded) {
+                        await gameMusicRef.current.stopAsync();
+                        await gameMusicRef.current.setVolumeAsync(0.55);
+                        await gameMusicRef.current.setPositionAsync(0);
+                        await gameMusicRef.current.playAsync();
+                      }
+                    }
+                  } catch {}
+                  startGame();
+                }}
+                style={({ pressed }) => [styles.pillOutlineBtn, styles.pausePillBtn, pressed && styles.pressedSoft]}
+              >
+                <Text style={styles.pillOutlineText}>↺  RESTART</Text>
+              </Pressable>
+
+              {/* Back to Start Menu */}
+              <Pressable
+                onPress={() => {
+                  setIsPaused(false);
+                  gameMusicRef.current?.setVolumeAsync(0.55).catch(() => {});
+                  setScreen("start");
+                }}
+                style={({ pressed }) => [styles.pillOutlineBtn, styles.pausePillBtn, pressed && styles.pressedSoft]}
+              >
+                <Text style={styles.pillOutlineText}>⌂  START MENU</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+
         {/* ── HUD row (fixed height, never grows) ── */}
         <View style={styles.hudRow}>
           {/* Streak — left */}
@@ -591,10 +683,18 @@ export default function TempoTap() {
             </Text>
           </Animated.View>
 
-          {/* Speed — right */}
-          <View style={styles.speedBadge}>
-            <Text style={styles.speedBadgeLabel}>SPD</Text>
-            <Text style={styles.speedBadgeValue}>{speedMultiplier}x</Text>
+          {/* Speed + Pause — right */}
+          <View style={styles.rightHudCol}>
+            <View style={styles.speedBadge}>
+              <Text style={styles.speedBadgeLabel}>SPD</Text>
+              <Text style={styles.speedBadgeValue}>{speedMultiplier}x</Text>
+            </View>
+            <Pressable
+              onPress={pauseGame}
+              style={({ pressed }) => [styles.pauseBtn, pressed && styles.pressedSoft]}
+            >
+              <Text style={styles.pauseBtnText}>⏸</Text>
+            </Pressable>
           </View>
         </View>
 
@@ -675,14 +775,15 @@ const styles = StyleSheet.create({
   // ── Start Screen ──────────────────────────────────────────────────────────
   startContainer: {
     flex: 1,
-    paddingTop: Platform.OS === "android" ? 56 : 44,
+    paddingTop: Platform.OS === "android" ? 36 : 28,
     paddingHorizontal: 28,
-    paddingBottom: 36,
+    paddingBottom: 24,
     alignItems: "center",
+    justifyContent: "space-between",
   },
   titleBlock: {
     alignItems: "center",
-    marginBottom: 28,
+    marginBottom: 0,
   },
   bigTitle: {
     color: UI.white,
@@ -705,7 +806,8 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
     letterSpacing: 0.4,
-    marginBottom: 6,
+    marginBottom: 4,
+    marginTop: 2,
   },
   subText: {
     color: UI.white70,
@@ -716,7 +818,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 14,
     width: "100%",
-    marginBottom: 28,
+    marginBottom: 0,
   },
   startStatCard: {
     flex: 1,
@@ -746,7 +848,7 @@ const styles = StyleSheet.create({
 
   // ── How to Play ───────────────────────────────────────────────────────────
   howToPlayBox: {
-    marginTop: 32,
+    marginTop: 0,
     alignItems: "center",
     paddingHorizontal: 8,
   },
@@ -1067,5 +1169,83 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     marginTop: 2,
     letterSpacing: 0.5,
+  },
+
+  // ── Logo ──────────────────────────────────────────────────────────────────
+  logoImageHero: {
+    width: 260,
+    height: 200,
+    marginBottom: 4,
+  },
+
+  // ── Pause Button (HUD) ────────────────────────────────────────────────────
+  rightHudCol: {
+    width: 68,
+    alignItems: "center",
+    gap: 6,
+  },
+  pauseBtn: {
+    width: 68,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: UI.white18,
+    borderWidth: 1,
+    borderColor: UI.white12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pauseBtnText: {
+    fontSize: 16,
+    color: UI.white80,
+  },
+
+  // ── Pause Overlay & Card ──────────────────────────────────────────────────
+  pauseOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 5, 40, 0.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
+  },
+  pauseCard: {
+    width: "100%",
+    maxWidth: 360,
+    borderRadius: 28,
+    paddingTop: 28,
+    paddingBottom: 32,
+    paddingHorizontal: 28,
+    alignItems: "center",
+    backgroundColor: "rgba(92, 33, 182, 0.72)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.22)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.45,
+    shadowRadius: 28,
+    elevation: 20,
+  },
+  pauseLogo: {
+    width: 180,
+    height: 140,
+    marginBottom: 4,
+  },
+  pauseTitle: {
+    color: UI.white,
+    fontSize: 28,
+    fontWeight: "900",
+    letterSpacing: 5,
+    marginTop: 0,
+    marginBottom: 2,
+  },
+  pauseDivider: {
+    marginTop: 10,
+    marginBottom: 18,
+    width: 48,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: "rgba(255,255,255,0.35)",
+  },
+  pausePillBtn: {
+    marginVertical: 6,
   },
 });
